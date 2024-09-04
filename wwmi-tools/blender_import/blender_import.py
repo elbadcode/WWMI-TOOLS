@@ -130,7 +130,7 @@ def import_normals_step2(mesh):
     mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
 
     mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
-    # well not sure where the auto smooth went but it seems fine to get rid of it and it broke imports so bye bye
+    # nvm we definitely need a fix for autosmooth, the new version is terrible!
     # mesh.use_auto_smooth = (True  # This has a double meaning, one of which is to use the custom normals)
     # XXX CHECKME: show_edge_sharp moved in 2.80, but I can't actually
     # recall what it does and have a feeling it was unimportant:
