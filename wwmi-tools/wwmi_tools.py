@@ -120,6 +120,12 @@ class WWMI_Settings(bpy.types.PropertyGroup):
         default=0,
     ) # type: ignore
 
+    scale_mesh: BoolProperty(
+        name="Scale Mesh",
+        description="Automatically scale mesh down by 100 fold to match default unit conversion between UE and Blender. Benefit is possibly increased precision (may be important if using physics to drape clothing as it can reduce clipping!) but you will likely need to change some viewport settings to see your mesh",
+        default=True,
+    )  # type: ignore
+
     mirror_mesh: BoolProperty(
         name="Mirror Mesh",
         description="Automatically mirror mesh to match actual in-game left-right. May cause issues with some Blender tools. Can be me manually set via adding or removing '-' sign for Scale X in Transform section of Object Properties",
