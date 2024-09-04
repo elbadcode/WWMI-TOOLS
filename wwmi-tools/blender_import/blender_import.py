@@ -20,7 +20,8 @@ from ..extract_frame_data.metadata_format import read_metadata
 from .buffers import VertexBuffer, IndexBuffer
 
 
-class Fatal(Exception): pass
+class Fatal(Exception):
+    pass
 
 
 if bpy.app.version >= (2, 80):
@@ -31,23 +32,45 @@ else:
 
 def load_3dmigoto_mesh_bin(operator, vb_paths, ib_paths, pose_path):
     if len(vb_paths) != 1 or len(ib_paths) > 1:
-        raise Fatal('Cannot merge meshes loaded from binary files')
+        raise Fatal("Cannot merge meshes loaded from binary files")
 
     # Loading from binary files, but still need to use the .txt files as a
     # reference for the format:
     vb_bin_path, vb_txt_path = vb_paths[0]
     ib_bin_path, ib_txt_path = ib_paths[0]
 
-    vb = VertexBuffer(open(vb_txt_path, 'r'), load_vertices=False)
-    vb.parse_vb_bin(open(vb_bin_path, 'rb'))
+    vb = VertexBuffer(open(vb_txt_path, "r"), load_vertices=False)
+    vb.parse_vb_bin(open(vb_bin_path, "rb"))
 
     ib = None
     if ib_paths:
-        ib = IndexBuffer(open(ib_txt_path, 'r'), load_indices=False)
-        ib.parse_ib_bin(open(ib_bin_path, 'rb'))
+        ib = IndexBuffer(open(ib_txt_path, "r"), load_indices=False)
+        ib.parse_ib_bin(open(ib_bin_path, "rb"))
 
     return vb, ib, os.path.basename(vb_bin_path), pose_path
 
+def new_custom_attribute_float(mesh, layer_name):
+    if bpy.app.version >= (4, 0):
+        # TODO: float2 and float3 could be stored directly as 'FLOAT2' /
+        # 'FLOAT_VECTOR' types (in fact, UV layers in 4.0 show up in attributes
+        # using FLOAT2) instead of saving each component as a separate layer.
+        # float4 is missing though. For now just get it working equivelently to
+        # the old vertex layers.
+        mesh.attributes.new(name=layer_name, type="FLOAT", domain="POINT")
+        return mesh.attributes[layer_name]
+    else:
+        mesh.vertex_layers_float.new(name=layer_name)
+        return mesh.vertex_layers_float[layer_name]
+
+def custom_attributes_float(mesh):
+    if bpy.app.version >= (4, 0):
+        return {
+            k: v
+            for k, v in mesh.attributes.items()
+            if (v.data_type, v.domain) == ("FLOAT", "POINT")
+        }
+    else:
+        return mesh.vertex_layers_float
 
 def load_3dmigoto_mesh(operator, paths):
     vb_paths, ib_paths, use_bin, pose_path = zip(*paths)
@@ -56,10 +79,10 @@ def load_3dmigoto_mesh(operator, paths):
     if use_bin[0]:
         return load_3dmigoto_mesh_bin(operator, vb_paths, ib_paths, pose_path)
 
-    vb = VertexBuffer(open(vb_paths[0], 'r'))
+    vb = VertexBuffer(open(vb_paths[0], "r"))
     # Merge additional vertex buffers for meshes split over multiple draw calls:
     for vb_path in vb_paths[1:]:
-        tmp = VertexBuffer(open(vb_path, 'r'))
+        tmp = VertexBuffer(open(vb_path, "r"))
         vb.merge(tmp)
 
     # For quickly testing how importent any unsupported semantics may be:
@@ -72,45 +95,33 @@ def load_3dmigoto_mesh(operator, paths):
 
     ib = None
     if ib_paths:
-        ib = IndexBuffer(open(ib_paths[0], 'r'))
+        ib = IndexBuffer(open(ib_paths[0], "r"))
         # Merge additional vertex buffers for meshes split over multiple draw calls:
         for ib_path in ib_paths[1:]:
-            tmp = IndexBuffer(open(ib_path, 'r'))
+            tmp = IndexBuffer(open(ib_path, "r"))
             ib.merge(tmp)
 
     return vb, ib, os.path.basename(vb_paths[0]), pose_path
 
 
-def import_normals_step1(mesh, data, vertex_layers, translate_normal):
+def import_normals_step1(mesh, data, vertex_layers, operator, translate_normal):
     # Ensure normals are 3-dimensional:
     # XXX: Assertion triggers in DOA6
-    # if len(data[0]) == 4:
-    #     if [x[3] for x in data] != [0.0]*len(data):
-    #         #raise Fatal('Normals are 4D')
-    #         # operator.report({'WARNING'}, 'Normals are 4D, storing W coordinate in NORMAL.w vertex layer. Beware that some types of edits on this mesh may be problematic.')
-    #         vertex_layers['NORMAL.w'] = [[x[3]] for x in data]
+    if len(data[0]) == 4:
+        if [x[3] for x in data] != [0.0] * len(data):
+            vertex_layers["NORMAL.w"] = [[x[3]] for x in data]
     normals = [tuple(map(translate_normal, (x[0], x[1], x[2]))) for x in data]
-
-    # To make sure the normals don't get lost by Blender's edit mode,
-    # or mesh.update() we need to set custom normals in the loops, not
-    # vertices.
-    #
-    # For testing, to make sure our normals are preserved let's use
-    # garbage ones:
-    #import random
-    #normals = [(random.random() * 2 - 1,random.random() * 2 - 1,random.random() * 2 - 1) for x in normals]
-    #
-    # Comment from other import scripts:
-    # Note: we store 'temp' normals in loops, since validate() may alter final mesh,
-    #       we can only set custom lnors *after* calling it.
+    if bpy.app.version >= (4, 1):
+        return normals
     mesh.create_normals_split()
     for l in mesh.loops:
         l.normal[:] = normals[l.vertex_index]
+    return []
 
 
 def import_normals_step2(mesh):
     # Taken from import_obj/import_fbx
-    clnors = array('f', [0.0] * (len(mesh.loops) * 3))
+    clnors = array("f", [0.0] * (len(mesh.loops) * 3))
     mesh.loops.foreach_get("normal", clnors)
 
     # Not sure this is still required with use_auto_smooth, but the other
@@ -118,21 +129,24 @@ def import_normals_step2(mesh):
     mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
 
     mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
-    mesh.use_auto_smooth = True  # This has a double meaning, one of which is to use the custom normals
+    # well not sure where the auto smooth went but it seems fine to get rid of it and it broke imports
+    # mesh.use_auto_smooth = (True  # This has a double meaning, one of which is to use the custom normals)
     # XXX CHECKME: show_edge_sharp moved in 2.80, but I can't actually
     # recall what it does and have a feeling it was unimportant:
     # mesh.show_edge_sharp = True
 
 
 def import_vertex_groups(mesh, obj, blend_indices, blend_weights, component):
-    assert (len(blend_indices) == len(blend_weights))
+    assert len(blend_indices) == len(blend_weights)
     if blend_indices:
         # We will need to make sure we re-export the same blend indices later -
         # that they haven't been renumbered. Not positive whether it is better
         # to use the vertex group index, vertex group name or attach some extra
         # data. Make sure the indices and names match:
         if component is None:
-            num_vertex_groups = max(itertools.chain(*itertools.chain(*blend_indices.values()))) + 1
+            num_vertex_groups = (
+                max(itertools.chain(*itertools.chain(*blend_indices.values()))) + 1
+            )
         else:
             num_vertex_groups = max(component.vg_map.values()) + 1
             vg_map = list(map(int, component.vg_map.values()))
@@ -140,23 +154,25 @@ def import_vertex_groups(mesh, obj, blend_indices, blend_weights, component):
             obj.vertex_groups.new(name=str(i))
         for vertex in mesh.vertices:
             for semantic_index in sorted(blend_indices.keys()):
-                for i, w in zip(blend_indices[semantic_index][vertex.index],
-                                blend_weights[semantic_index][vertex.index]):
+                for i, w in zip(
+                    blend_indices[semantic_index][vertex.index],
+                    blend_weights[semantic_index][vertex.index],
+                ):
                     if w == 0.0:
                         continue
                     if component is None:
-                        obj.vertex_groups[i].add((vertex.index,), w, 'REPLACE')
+                        obj.vertex_groups[i].add((vertex.index,), w, "REPLACE")
                     else:
-                        obj.vertex_groups[vg_map[i]].add((vertex.index,), w, 'REPLACE')
+                        obj.vertex_groups[vg_map[i]].add((vertex.index,), w, "REPLACE")
 
 
 def import_shapekeys(mesh, obj, shapekeys):
     if len(shapekeys.keys()) == 0:
         return
-    
+
     # Add basis shapekey
-    basis_shapekey = obj.shape_key_add(name='Basis')
-    basis_shapekey.interpolation = 'KEY_LINEAR'
+    basis_shapekey = obj.shape_key_add(name="Basis")
+    basis_shapekey.interpolation = "KEY_LINEAR"
 
     # Set shapekeys to relative 'cause WuWa uses this type
     obj.data.shape_keys.use_relative = True
@@ -164,8 +180,8 @@ def import_shapekeys(mesh, obj, shapekeys):
     # Import shapekeys
     for shapekey_id in shapekeys.keys():
         # Add new shapekey
-        shapekey = obj.shape_key_add(name=f'Deform {shapekey_id}')
-        shapekey.interpolation = 'KEY_LINEAR'
+        shapekey = obj.shape_key_add(name=f"Deform {shapekey_id}")
+        shapekey.interpolation = "KEY_LINEAR"
 
         # Apply shapekey vertex position offsets to each indexed vertex
         shapekey_data = shapekeys[shapekey_id]
@@ -177,23 +193,23 @@ def import_shapekeys(mesh, obj, shapekeys):
 
 
 def import_uv_layers(mesh, obj, texcoords, flip_texcoord_v):
-    for (texcoord, data) in sorted(texcoords.items()):
+    for texcoord, data in sorted(texcoords.items()):
         # TEXCOORDS can have up to four components, but UVs can only have two
         # dimensions. Not positive of the best way to handle this in general,
         # but for now I'm thinking that splitting the TEXCOORD into two sets of
         # UV coordinates might work:
         dim = len(data[0])
         if dim == 4:
-            components_list = ('xy', 'zw')
+            components_list = ("xy", "zw")
         elif dim == 2:
-            components_list = ('xy',)
+            components_list = ("xy",)
         else:
-            raise Fatal('Unhandled TEXCOORD dimension: %i' % dim)
-        cmap = {'x': 0, 'y': 1, 'z': 2, 'w': 3}
+            raise Fatal("Unhandled TEXCOORD dimension: %i" % dim)
+        cmap = {"x": 0, "y": 1, "z": 2, "w": 3}
 
         for components in components_list:
-            uv_name = 'TEXCOORD%s.%s' % (texcoord and texcoord or '', components)
-            if hasattr(mesh, 'uv_textures'):  # 2.79
+            uv_name = "TEXCOORD%s.%s" % (texcoord and texcoord or "", components)
+            if hasattr(mesh, "uv_textures"):  # 2.79
                 mesh.uv_textures.new(uv_name)
             else:  # 2.80
                 mesh.uv_layers.new(name=uv_name)
@@ -227,13 +243,12 @@ def import_uv_layers(mesh, obj, texcoords, flip_texcoord_v):
 
 # This loads unknown data from the vertex buffers as vertex layers
 def import_vertex_layers(mesh, obj, vertex_layers):
-    for (element_name, data) in sorted(vertex_layers.items()):
+    for element_name, data in sorted(vertex_layers.items()):
         dim = len(data[0])
-        cmap = {0: 'x', 1: 'y', 2: 'z', 3: 'w'}
+        cmap = {0: "x", 1: "y", 2: "z", 3: "w"}
         for component in range(dim):
-
-            if dim != 1 or element_name.find('.') == -1:
-                layer_name = '%s.%s' % (element_name, cmap[component])
+            if dim != 1 or element_name.find(".") == -1:
+                layer_name = "%s.%s" % (element_name, cmap[component])
             else:
                 layer_name = element_name
 
@@ -248,49 +263,49 @@ def import_vertex_layers(mesh, obj, vertex_layers):
                     if val < 0x80000000:
                         layer.data[v.index].value = val
                     else:
-                        layer.data[v.index].value = struct.unpack('i', struct.pack('I', val))[0]
+                        layer.data[v.index].value = struct.unpack(
+                            "i", struct.pack("I", val)
+                        )[0]
             elif type(data[0][0]) == float:
-                mesh.vertex_layers_float.new(name=layer_name)
-                layer = mesh.vertex_layers_float[layer_name]
+                layer = new_custom_attribute_float(mesh, layer_name)
                 for v in mesh.vertices:
                     layer.data[v.index].value = data[v.index][component]
             else:
-                raise Fatal('BUG: Bad layer type %s' % type(data[0][0]))
+                raise Fatal("BUG: Bad layer type %s" % type(data[0][0]))
 
 
 def import_faces_from_ib(mesh, ib):
     mesh.loops.add(len(ib.faces) * 3)
     mesh.polygons.add(len(ib.faces))
-    mesh.loops.foreach_set('vertex_index', unpack_list(ib.faces))
-    mesh.polygons.foreach_set('loop_start', [x * 3 for x in range(len(ib.faces))])
-    mesh.polygons.foreach_set('loop_total', [3] * len(ib.faces))
-
+    mesh.loops.foreach_set("vertex_index", unpack_list(ib.faces))
+    mesh.polygons.foreach_set("loop_start", [x * 3 for x in range(len(ib.faces))])
+    mesh.polygons.foreach_set("loop_total", [3] * len(ib.faces))
 
 def import_faces_from_vb(mesh, vb):
     # Only lightly tested
     num_faces = len(vb.vertices) // 3
     mesh.loops.add(num_faces * 3)
     mesh.polygons.add(num_faces)
-    mesh.loops.foreach_set('vertex_index', [x for x in range(num_faces * 3)])
-    mesh.polygons.foreach_set('loop_start', [x * 3 for x in range(num_faces)])
-    mesh.polygons.foreach_set('loop_total', [3] * num_faces)
+    mesh.loops.foreach_set("vertex_index", [x for x in range(num_faces * 3)])
+    mesh.polygons.foreach_set("loop_start", [x * 3 for x in range(num_faces)])
+    mesh.polygons.foreach_set("loop_total", [3] * num_faces)
 
 
 def normal_import_translation(elem, flip):
-    unorm = elem.Format.endswith('_UNORM')
+    unorm = elem.Format.endswith("_UNORM")
     if unorm:
         # Scale UNORM range 0:+1 to normal range -1:+1
         if flip:
-            return lambda x: -(x*2.0 - 1.0)
+            return lambda x: -(x * 2.0 - 1.0)
         else:
-            return lambda x: x*2.0 - 1.0
+            return lambda x: x * 2.0 - 1.0
     if flip:
         return lambda x: -x
     else:
         return lambda x: x
 
 
-def import_vertices(mesh, vb, flip_normal=False):
+def import_vertices(mesh, vb, flip_normal, obj):
     mesh.vertices.add(len(vb.vertices))
 
     seen_offsets = set()
@@ -302,7 +317,7 @@ def import_vertices(mesh, vb, flip_normal=False):
     shapekeys = {}
 
     for elem in vb.layout:
-        if elem.InputSlotClass != 'per-vertex':
+        if elem.InputSlotClass != "per-vertex":
             continue
 
         # TODO: Allow poorly named semantics to map to other meanings to be
@@ -317,15 +332,15 @@ def import_vertices(mesh, vb, flip_normal=False):
         # Discard elements that reuse offsets in the vertex buffer, e.g. COLOR
         # and some TEXCOORDs may be aliases of POSITION:
         if (elem.InputSlot, elem.AlignedByteOffset) in seen_offsets:
-            assert (translated_elem_name != 'POSITION')
+            assert translated_elem_name != "POSITION"
             continue
         seen_offsets.add((elem.InputSlot, elem.AlignedByteOffset))
 
         data = tuple(x[elem.name] for x in vb.vertices)
-        if translated_elem_name == 'POSITION':
+        if translated_elem_name == "POSITION":
             # Ensure positions are 3-dimensional:
             if len(data[0]) == 4:
-                if ([x[3] for x in data] != [1.0] * len(data)):
+                if [x[3] for x in data] != [1.0] * len(data):
                     # XXX: Leaving this fatal error in for now, as the meshes
                     # it triggers on in DOA6 (skirts) lie about almost every
                     # semantic and we cannot import them with this version of
@@ -335,14 +350,16 @@ def import_vertices(mesh, vb, flip_normal=False):
                     # back into 3D if we assume the coordinates are homogeneous
                     # (i.e. divide XYZ by W), but that might be assuming too
                     # much for a generic script.
-                    raise Fatal('Positions are 4D')
+                    raise Fatal("Positions are 4D")
                     # Occurs in some meshes in DOA6, such as skirts.
                     # W coordinate must be preserved in these cases.
-                    print('Positions are 4D, storing W coordinate in POSITION.w vertex layer')
-                    vertex_layers['POSITION.w'] = [[x[3]] for x in data]
+                    print(
+                        "Positions are 4D, storing W coordinate in POSITION.w vertex layer"
+                    )
+                    vertex_layers["POSITION.w"] = [[x[3]] for x in data]
             positions = [(x[0], x[1], x[2]) for x in data]
-            mesh.vertices.foreach_set('co', unpack_list(positions))
-        elif translated_elem_name.startswith('COLOR'):
+            mesh.vertices.foreach_set("co", unpack_list(positions))
+        elif translated_elem_name.startswith("COLOR"):
             if len(data[0]) <= 3 or vertex_color_layer_channels == 4:
                 # Either a monochrome/RGB layer, or Blender 2.80 which uses 4
                 # channel layers
@@ -350,20 +367,22 @@ def import_vertices(mesh, vb, flip_normal=False):
                 color_layer = mesh.vertex_colors[elem.name].data
                 c = vertex_color_layer_channels
                 for l in mesh.loops:
-                    color_layer[l.index].color = list(data[l.vertex_index]) + [0] * (c - len(data[l.vertex_index]))
+                    color_layer[l.index].color = list(data[l.vertex_index]) + [0] * (
+                        c - len(data[l.vertex_index])
+                    )
             else:
-                mesh.vertex_colors.new(name=elem.name + '.RGB')
-                mesh.vertex_colors.new(name=elem.name + '.A')
-                color_layer = mesh.vertex_colors[elem.name + '.RGB'].data
-                alpha_layer = mesh.vertex_colors[elem.name + '.A'].data
+                mesh.vertex_colors.new(name=elem.name + ".RGB")
+                mesh.vertex_colors.new(name=elem.name + ".A")
+                color_layer = mesh.vertex_colors[elem.name + ".RGB"].data
+                alpha_layer = mesh.vertex_colors[elem.name + ".A"].data
                 for l in mesh.loops:
                     color_layer[l.index].color = data[l.vertex_index][:3]
                     alpha_layer[l.index].color = [data[l.vertex_index][3], 0, 0]
-        elif translated_elem_name == 'NORMAL':
+        elif translated_elem_name == "NORMAL":
             use_normals = True
             translate_normal = normal_import_translation(elem, flip_normal)
-            import_normals_step1(mesh, data, vertex_layers, translate_normal)
-        elif translated_elem_name in ('TANGENT', 'BINORMAL'):
+            import_normals_step1(mesh, data, vertex_layers, obj, translate_normal)
+        elif translated_elem_name in ("TANGENT", "BINORMAL"):
             #    # XXX: loops.tangent is read only. Not positive how to handle
             #    # this, or if we should just calculate it when re-exporting.
             #    for l in mesh.loops:
@@ -371,42 +390,53 @@ def import_vertices(mesh, vb, flip_normal=False):
             #        l.tangent[:] = data[l.vertex_index][0:3]
             # print('NOTICE: Skipping import of %s in favour of recalculating on export' % elem.name)
             pass
-        elif translated_elem_name.startswith('BLENDINDICES'):
+        elif translated_elem_name.startswith("BLENDINDICES"):
             # data = [[y & 255 for y in x] for x in data]
             blend_indices[elem.SemanticIndex] = data
-        elif translated_elem_name.startswith('BLENDWEIGHT'):
+        elif translated_elem_name.startswith("BLENDWEIGHT"):
             blend_weights[elem.SemanticIndex] = data
-        elif translated_elem_name.startswith('TEXCOORD') and elem.is_float():
+        elif translated_elem_name.startswith("TEXCOORD") and elem.is_float():
             texcoords[elem.SemanticIndex] = data
-        elif translated_elem_name.startswith('SHAPEKEY') and elem.is_float():
+        elif translated_elem_name.startswith("SHAPEKEY") and elem.is_float():
             # if elem.SemanticIndex not in shapekeys:
             #     shapekeys[elem.SemanticIndex] = {}
             shapekeys[elem.SemanticIndex] = data
 
         else:
-            print('NOTICE: Storing unhandled semantic %s %s as vertex layer' % (elem.name, elem.Format))
+            print(
+                "NOTICE: Storing unhandled semantic %s %s as vertex layer"
+                % (elem.name, elem.Format)
+            )
             vertex_layers[elem.name] = data
 
-    return (blend_indices, blend_weights, texcoords, vertex_layers, use_normals, shapekeys)
+    return (
+        blend_indices,
+        blend_weights,
+        texcoords,
+        vertex_layers,
+        use_normals,
+        shapekeys,
+    )
 
 
-def import_3dmigoto_vb_ib(operator, context, cfg, paths, flip_texcoord_v=True, axis_forward='-Y', axis_up='Z'):
-    
+def import_3dmigoto_vb_ib(
+        operator, context, cfg, paths, flip_texcoord_v=True, axis_forward="-Y", axis_up="Z"
+):
     vb_paths, ib_paths, use_bin, pose_path = zip(*paths)
     fmt_path = vb_paths[0][1]
 
     object_source_folder = resolve_path(cfg.object_source_folder)
-    extracted_object = read_metadata(object_source_folder / 'Metadata.json')
+    extracted_object = read_metadata(object_source_folder / "Metadata.json")
 
-    component_pattern = re.compile(r'.*component[ -_]*([0-9]+).*')
+    component_pattern = re.compile(r".*component[ -_]*([0-9]+).*")
     result = component_pattern.findall(fmt_path.name.lower())
     component = None
-    if cfg.import_skeleton_type == 'MERGED' and len(result) == 1:
+    if cfg.import_skeleton_type == "MERGED" and len(result) == 1:
         component = extracted_object.components[int(result[0])]
-        
+
     vb, ib, name, pose_path = load_3dmigoto_mesh(operator, paths)
 
-    name = name.split('.')[0]
+    name = name.split(".")[0]
 
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(mesh.name, mesh)
@@ -414,24 +444,19 @@ def import_3dmigoto_vb_ib(operator, context, cfg, paths, flip_texcoord_v=True, a
     global_matrix = axis_conversion(from_forward=axis_forward, from_up=axis_up).to_4x4()
     obj.matrix_world = global_matrix
 
-    # Attach the vertex buffer layout to the object for later exporting. Can't
-    # seem to retrieve this if attached to the mesh - to_mesh() doesn't copy it:
-    # obj['3DMigoto:VBLayout'] = vb.layout.serialise()
-    # obj['3DMigoto:VBStride'] = vb.layout.stride  # FIXME: Strides of multiple vertex buffers
-    # obj['3DMigoto:FirstVertex'] = vb.first
-
     if ib is not None:
         import_faces_from_ib(mesh, ib)
-        # Attach the index buffer layout to the object for later exporting.
-        # if ib.format == "DXGI_FORMAT_R16_UINT":
-        #     obj['3DMigoto:IBFormat'] = "DXGI_FORMAT_R32_UINT"
-        # else:
-        #     obj['3DMigoto:IBFormat'] = ib.format
-        # obj['3DMigoto:FirstIndex'] = ib.first
     else:
         import_faces_from_vb(mesh, vb)
 
-    (blend_indices, blend_weights, texcoords, vertex_layers, use_normals, shapekeys) = import_vertices(mesh, vb, flip_normal=False)
+    (
+        blend_indices,
+        blend_weights,
+        texcoords,
+        vertex_layers,
+        use_normals,
+        shapekeys,
+    ) = import_vertices(mesh, vb, flip_normal=False, obj=obj)
 
     mesh.flip_normals()
 
@@ -443,12 +468,9 @@ def import_3dmigoto_vb_ib(operator, context, cfg, paths, flip_texcoord_v=True, a
 
     import_shapekeys(mesh, obj, shapekeys)
 
-    # Validate closes the loops so they don't disappear after edit mode and probably other important things:
-    mesh.validate(verbose=False, clean_customdata=False)  # *Very* important to not remove lnors here!
-    # Not actually sure update is necessary. It seems to update the vertex normals, not sure what else:
+    mesh.validate(verbose=False, clean_customdata=False)
     mesh.update()
 
-    # Must be done after validate step:
     if use_normals:
         import_normals_step2(mesh)
     else:
@@ -458,29 +480,30 @@ def import_3dmigoto_vb_ib(operator, context, cfg, paths, flip_texcoord_v=True, a
 
 
 def blender_import(operator, context, cfg):
-    
     object_source_folder = resolve_path(cfg.object_source_folder)
 
     col = new_collection(object_source_folder.stem)
 
-    for filename in os.listdir(object_source_folder):
-        if not filename.endswith('fmt'):
+    for file in os.scandir(object_source_folder):
+        if not file.name.endswith("fmt"):
             continue
+        #aside from speed this is why we like scandir
+        fmt_path = Path(file.path)
+        ib_path = fmt_path.with_suffix(".ib")
+        vb_path = fmt_path.with_suffix(".vb")
 
-        fmt_path = object_source_folder / filename
-        ib_path = fmt_path.with_suffix('.ib')
-        vb_path = fmt_path.with_suffix('.vb')
-
-        obj = import_3dmigoto_vb_ib(operator, context, cfg, [((vb_path, fmt_path), (ib_path, fmt_path), True, None)])
+        obj = import_3dmigoto_vb_ib(
+            operator,
+            context,
+            cfg,
+            [((vb_path, fmt_path), (ib_path, fmt_path), True, None)],
+        )
 
         link_object_to_collection(obj, col)
-    
-        with OpenObject(context, obj, 'OBJECT'):
 
+        with OpenObject(context, obj, "OBJECT"):
             # obj.rotation_euler[0] = math.radians(0)
             # obj.rotation_euler[2] = math.radians(180)
 
-            if cfg.mirror_mesh:
-                obj.scale = -0.01, 0.01, 0.01
-            else:
-                obj.scale = 0.01, 0.01, 0.01
+            obj.scale = ((0.01, 0.01, 0.01) if cfg.scale_mesh else (1, 1, 1))
+            obj.scale *= -1 if cfg.mirror_mesh else 1
