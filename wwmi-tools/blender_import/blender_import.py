@@ -104,6 +104,7 @@ def load_3dmigoto_mesh(operator, paths):
     return vb, ib, os.path.basename(vb_paths[0]), pose_path
 
 
+#straight yoinked this from leo
 def import_normals_step1(mesh, data, vertex_layers, operator, translate_normal):
     # Ensure normals are 3-dimensional:
     # XXX: Assertion triggers in DOA6
@@ -129,7 +130,7 @@ def import_normals_step2(mesh):
     mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
 
     mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
-    # well not sure where the auto smooth went but it seems fine to get rid of it and it broke imports
+    # well not sure where the auto smooth went but it seems fine to get rid of it and it broke imports so bye bye
     # mesh.use_auto_smooth = (True  # This has a double meaning, one of which is to use the custom normals)
     # XXX CHECKME: show_edge_sharp moved in 2.80, but I can't actually
     # recall what it does and have a feeling it was unimportant:
@@ -215,6 +216,8 @@ def import_uv_layers(mesh, obj, texcoords, flip_texcoord_v):
                 mesh.uv_layers.new(name=uv_name)
             blender_uvs = mesh.uv_layers[uv_name]
 
+            # disagree that its guesswork, or maybe its guesswork but its not unreasonable guesswork for us to do imo. will be revisiting soon and hopefully add fully auto texture setup. 
+            # even if its wrong occasionally I still think it would be less work for an artists to just change to a different image but I'm tired so later
             # This will assign a texture to the UV layer, which works fine but
             # working out which texture maps to which UV layer is guesswork
             # before the import and the artist may as well just assign it
@@ -504,6 +507,6 @@ def blender_import(operator, context, cfg):
         with OpenObject(context, obj, "OBJECT"):
             # obj.rotation_euler[0] = math.radians(0)
             # obj.rotation_euler[2] = math.radians(180)
-
+            # new option to skip scaling for advanced users but haven't added to UI yet  
             obj.scale = ((0.01, 0.01, 0.01) if cfg.scale_mesh else (1, 1, 1))
             obj.scale *= -1 if cfg.mirror_mesh else 1
