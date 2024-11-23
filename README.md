@@ -1,4 +1,4 @@
-works in 4.2 LTS without issue. The only outstanding issue is changes to autosmooth. I recommend simply using a subdivsiion modifier + the new autosmooth to compensate 
+works in 4.2 LTS without major issue. The only outstanding issue is changes to autosmooth. I recommend simply using a subdivsiion modifier + the new autosmooth to compensate 
 this has not underdog thorough review by the original author and I am not planning or able to provide support here. Therefore use at your own risk if you're prepared to troubleshoot for yourself
 
 <h1 align="center">WWMI Tools</h1>
