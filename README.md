@@ -1,5 +1,9 @@
-works in 4.2 LTS without major issue. The only outstanding issue is changes to autosmooth. I recommend simply using a subdivsiion modifier + the new autosmooth to compensate 
-this has not underdog thorough review by the original author and I am not planning or able to provide support here. Therefore use at your own risk if you're prepared to troubleshoot for yourself
+works in 4.2 LTS without major issue. The only outstanding issue is due to changes to autosmooth with blender 4.0+. I recommend simply using a subdivsiion modifier + the new autosmooth to compensate but models will look worse in blender than they do in 3.6. this change doesn't seem to carry into the game so it's not worth worrying about imo
+
+please be aware this has not undergone thorough review by the original author and I am not planning or able to provide ongoing support here either. 
+
+I am reasonably confident that it works equally well as the original, which is to say any bugs are probably not added by me. with that said if you're going to raise an issue I'd ask that you first try to replicate the problem in blender 3.6 with the original plugin. if it replicates in 3.6, then you should raise the issue with the original author. if you can only produce the issue in 4.2 that is the one case where you should raise an issue on this page or contact me on discord.
+
 
 <h1 align="center">WWMI Tools</h1>
 
